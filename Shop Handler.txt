@@ -1,0 +1,296 @@
+local S = {}
+
+local debris = game:GetService("Debris")
+----Modules
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SimpleButton = require(ReplicatedStorage.SimpleButton)
+
+
+---Variables
+
+local MainCanvas = nil :: CanvasGroup
+local ShopSelectionButton = nil :: Frame
+local PreviewFrame = nil :: Frame
+
+
+
+local ShopSelectionButtonTable = {}
+local ShopScrollingFrames = {}
+local PreviewFrameTable = {}
+local ItemButtonTable = {}
+local ItemBuyButton = {}
+
+---Caches
+local cache = {}
+
+cache.LastPreviewFrame = nil
+
+
+function S.GetItemFrame(name, Type)
+	
+	if Type == "Tech" then
+		return ShopScrollingFrames[Type]:FindFirstChild(name):Clone()
+	end
+	
+	if Type == "Crates" then
+		return ShopScrollingFrames[Type]:FindFirstChild(name):Clone()
+	end
+	
+	if Type == "Skins" then
+		return ShopScrollingFrames[Type]:FindFirstChild(name):Clone()
+	end
+	
+end
+
+function S.PrepareBuyButtons(name : string, TYPE)
+	
+	local searchResult = PreviewFrameTable[name] :: Frame
+	
+	
+	if not searchResult then
+		return
+	end
+	
+	searchResult = searchResult:WaitForChild("Button") :: ImageButton
+	if not searchResult then
+		return
+	end
+	
+	if ItemBuyButton[searchResult.Parent.Name] then
+		return
+	end
+	
+	ItemBuyButton[searchResult.Parent.Name] = searchResult
+	
+	local btn = SimpleButton.new(searchResult , 1.1, game.SoundService.UISounds.pop_audio, "rbxassetid://85059630549541", "rbxassetid://112504943951476") --Prepare simple button animations for item buttons
+	btn:BindAction(function() 
+		
+		
+		local relatedItem = ItemButtonTable[name] :: ImageButton
+		if not relatedItem then
+			return
+		end
+		
+		if game.ReplicatedStorage.Remotes.Shop:InvokeServer( { Name = name, Type = TYPE }) then
+			local Purchase_clone = game.SoundService.UISounds.Purchase:Clone()
+			Purchase_clone.Parent = game.SoundService.Temp
+			Purchase_clone:Play()
+			debris:AddItem(Purchase_clone, 1.5)
+			relatedItem:WaitForChild("Lock").Visible = false
+		else
+			local Reject_Clone = game.SoundService.UISounds.Reject:Clone()
+			Reject_Clone.Parent = game.SoundService.Temp
+			Reject_Clone:Play()
+			debris:AddItem(Reject_Clone, 1.5)
+		end
+		
+		print(name.. " Pressed")
+	end)
+	
+end
+
+function S.OpenPreview(frameName : string, TYPE)
+	
+	local searchResult = PreviewFrameTable[frameName]
+	if searchResult then
+		
+		if cache.LastPreviewFrame then
+			cache.LastPreviewFrame.Visible = false
+		end
+		
+		searchResult.Visible = true
+		cache.LastPreviewFrame = searchResult
+		
+		S.PrepareBuyButtons(frameName, TYPE) ---- Prepare the buy button that is inside preivew frame of each item
+	else
+		warn("NO PREVIEW FRAME FOUND FOR: " .. frameName)
+	end
+
+end
+
+function S.PrepareFrameItems(FrameToPrepare : string)
+	
+	local Frame = ShopScrollingFrames[FrameToPrepare]
+	Frame.Visible = false
+	local GameDatabase = require(ReplicatedStorage:WaitForChild("GameDatabase"))
+	
+	for _, button in ipairs(Frame:GetChildren()) do
+		if button:IsA("ImageButton") then
+						
+			--------- BUTTON SETUP START ---------
+			
+			local previewFrame = PreviewFrame:WaitForChild(button.Name)
+			PreviewFrameTable[button.Name] = previewFrame
+			
+			local buttonName = button.Name
+
+			local cleanText = nil
+			
+			if FrameToPrepare == "Tech" then
+				
+				
+				previewFrame:WaitForChild("Description").Text = GameDatabase.Chips[button.Name].Description
+
+				local Reqs = previewFrame:WaitForChild("Requirements")
+				Reqs:WaitForChild("Cash").Amount.Text = "x" .. GameDatabase.Chips[button.Name].Cash
+				Reqs:WaitForChild("Damage").Amount.Text = "x" .. GameDatabase.Chips[button.Name].DamageCost
+				Reqs:WaitForChild("Level").Amount.Text = GameDatabase.Chips[button.Name].Level
+			end
+			
+			if FrameToPrepare == "Crates" then
+				
+				local Reqs = previewFrame:WaitForChild("Requirements")
+				Reqs:WaitForChild("Cash").Amount.Text = "x" .. GameDatabase.CrateCosts[button.Name].Price
+
+
+				local Holder = previewFrame:WaitForChild("Holder")
+				for idx, frame in ipairs(Holder:GetChildren()) do
+					if frame:IsA("Frame") then
+						local chance = GameDatabase.Crates[button.Name][tonumber(frame.Name)]["Chance"]
+						frame.TextLabel.Text = chance .. "%"
+					end
+				end
+				
+			end
+			
+			if FrameToPrepare == "Skins" then
+				cleanText = string.gsub(buttonName, "^%d+-", "")
+				local Holder = previewFrame:WaitForChild("Holder")
+				for idx, frame in ipairs(Holder:GetChildren()) do
+					if frame:IsA("Frame") then
+						--local chance = GameDatabase.Crates[button.Name][tonumber(frame.Name)]["Chance"]
+						--frame.TextLabel.Text = chance .. "%"
+					end
+				end
+			end
+			
+			local btn = SimpleButton.new(button , 1.1, game.SoundService.UISounds.ClickandRelease) --Prepare simple button animations for item buttons
+			btn:BindAction(function() 
+				S.OpenPreview( button.Name, FrameToPrepare )
+				print(button.Name .. " Pressed")
+			end)
+			
+			ItemButtonTable[button.Name] = button
+			
+			
+			--------- BUTTON SETUP END -----------
+			
+		end
+	end
+	
+end
+
+function S.OpenFrame(FrameToOpen : string)
+	
+	for _, frame in pairs(ShopScrollingFrames) do
+		if frame and frame.Name == FrameToOpen then
+			frame.Visible = true
+		else
+			frame.Visible = false
+		end
+	end
+	
+end
+
+function S.PrepareSelectionButton()
+	
+	if not ShopSelectionButton then
+		warn("NO SHOP SELECTION BUTTONS FOUND")
+		return
+	end
+	
+	
+	for _, button in ipairs(ShopSelectionButton:GetChildren()) do	
+		if button and button:IsA("ImageButton") then
+			
+			-------------- BUTTON SETUP START -------------
+			
+			local attachedFrame = MainCanvas:WaitForChild(button.Name)
+			ShopScrollingFrames[button.Name] = attachedFrame
+			
+			local btn = SimpleButton.new(button , 1.1, game.SoundService.UISounds.pop_audio) --Prepare simple button animations for selector buttons
+			ShopSelectionButtonTable[button.Name] = btn
+			
+			--Action for the button
+			
+			btn:BindAction(function() 
+				S.OpenFrame(attachedFrame.Name)
+				print(button.Name .. " Pressed")
+			end)
+			
+			-------------- BUTTON SETUP END -------------
+			
+		end
+	end
+end
+
+function S.StartLevelCheck()
+	
+	local Player = game.Players.LocalPlayer
+	local LeaderStats = Player:WaitForChild("leaderstats", math.huge)
+	local Level = LeaderStats:WaitForChild("LVL")
+	local GameDatabase = require(ReplicatedStorage:WaitForChild("GameDatabase"))
+		
+	task.spawn(function()
+		while true do
+			task.wait(2)
+						
+			for i, button in pairs(ItemButtonTable) do
+				
+				if button.Parent.Name == "Tech" then
+					--It is tech button
+					
+					if button:FindFirstChild("Lock") then
+						
+						local ReqLevel = GameDatabase.Chips[button.Name].Level
+						
+						local previewFrame = PreviewFrameTable[button.Name]
+						
+						if Level.Value >= ReqLevel then
+							button:FindFirstChild("Lock").Visible = false
+							--previewFrame.Button.Interactable = true
+						else
+							--previewFrame.Button.Interactable = false
+						end
+
+					end
+					
+				end
+				
+				
+			end
+			
+		end
+	end)
+	
+	
+end
+
+function S.GetPreviewFrames()
+	return PreviewFrame:GetChildren()
+end
+
+function S.Init() 
+		
+	S.PrepareSelectionButton()
+
+	S.PrepareFrameItems( "Tech" )
+	ShopScrollingFrames["Tech"].Visible = true
+	
+	S.PrepareFrameItems( "Crates" )
+	
+	S.PrepareFrameItems( "Skins" )
+	
+	S.StartLevelCheck()
+
+end
+
+function S.Share(_MainCanvas : CanvasGroup)
+	MainCanvas = _MainCanvas
+	ShopSelectionButton = MainCanvas:WaitForChild("ShopSelectionButton")
+	PreviewFrame  = MainCanvas:WaitForChild("Preview")
+end
+
+
+return S

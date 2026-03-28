@@ -1,0 +1,162 @@
+local RoundService = {}
+
+local Services
+local Classes
+
+local RS = game:GetService("ReplicatedStorage")
+local MatchState = RS:WaitForChild("MatchState")
+
+function RoundService.SwitchServerState(State, Time)
+	MatchState:SetAttribute("State", State)
+	MatchState:SetAttribute("Time", Time)
+end
+
+RoundService.StateTimes = {
+
+	Intermission = 5,
+	Fight = 10,
+	Voting = 10,
+	Countdown = 6
+
+}
+
+RoundService.StatesTemplate = {
+
+	Intermission = function(Time)
+		if not Time then
+			Time = RoundService.StateTimes.Intermission
+		end
+		RoundService.SwitchServerState("Intermission", Time)
+		for i = Time, 0, -1 do
+			RoundService.SwitchServerState("Intermission", i)
+			task.wait(1)
+			if i == 0 then
+				break
+			end
+		end
+	end,
+
+	Fight = function(Time)
+		if not Time then
+			Time = RoundService.StateTimes.Fight
+		end
+		RoundService.SwitchServerState("Fight", Time)
+		for i = Time, 0, -1 do
+			RoundService.SwitchServerState("Fight", i)
+			task.wait(1)
+			if i == 0 then
+				break
+			end
+		end
+	end,
+
+	Voting = function(Time)
+		if not Time then
+			Time = RoundService.StateTimes.Voting
+		end
+		RoundService.SwitchServerState("Voting", Time)
+		for i = Time, 0, -1 do
+			RoundService.SwitchServerState("Voting", i)
+			task.wait(1)
+			if i == 0 then
+				break
+			end
+		end
+	end,
+
+	Countdown = function(Time)
+		if not Time then
+			Time = RoundService.StateTimes.Countdown
+		end
+		RoundService.SwitchServerState("Countdown", Time)
+		for i = Time, 0, -1 do
+			RoundService.SwitchServerState("Countdown", i)
+			task.wait(1)
+			if i == 0 then
+				break
+			end
+		end
+	end,
+
+}
+
+
+function RoundService.RoundLoop()
+
+	while true do
+
+		Services.ServerSounds.Sounds.Lobby:Play(1)
+
+		RoundService.StatesTemplate.Intermission(10)
+
+
+
+		Services.VotingService.EstablishVotingPhase()
+
+
+
+		RoundService.StatesTemplate.Voting(3)
+
+
+
+
+		local SelectedMap = Services.VotingService.FinishVotingPhase()
+
+
+		SelectedMap:Load()
+
+		local Spawns = SelectedMap:GetSpawns()
+
+		Services.PlayerService.SetSpawns(Spawns)
+
+		MatchState:SetAttribute("Transition", true)
+		task.wait(1)
+
+		Services.PlayerService.TeleportPlayers(Spawns)
+		task.wait(2)
+		MatchState:SetAttribute("Transition", false)
+
+		Services.ServerSounds.Sounds.Lobby:Stop(1)
+		RoundService.StatesTemplate.Countdown()
+
+		Services.ServerSounds.Sounds.Music1:Play(1)
+		Services.BotManager.StartMatch(Spawns)
+		RoundService.StatesTemplate.Fight(30)
+		Services.BotManager.EndMatch()
+		Services.ServerSounds.Sounds.Music1:Stop(1)
+
+
+
+		RoundService.SwitchServerState("Leaderboard", 0)
+
+		local score_table =  Services.GameScoreHandler.GetCompleteTable()
+
+
+
+		game.ReplicatedStorage.Remotes.ShowEndLeaderboard:FireAllClients(score_table)
+		task.wait(5)
+		MatchState:SetAttribute("Transition", true)
+		Services.GameScoreHandler.Reset()
+		Services.PlayerService.SetSpawns( {game.Workspace.LobbySpawn} )
+		task.wait(1)
+		Services.PlayerService:TeleportPlayers()
+		MatchState:SetAttribute("Transition", false)
+		SelectedMap:Unload()
+
+
+
+	end
+
+end
+
+function RoundService.Start()
+	RoundService.RoundLoop()
+end
+
+function RoundService.Init(Shared)
+	Services = Shared[1]
+	Classes = Shared[2]
+
+end
+
+return RoundService

@@ -1,0 +1,768 @@
+local Player = game.Players.LocalPlayer
+local Character = Player.Character or Player.CharacterAdded:Wait()
+local Hum = Character:WaitForChild("Humanoid", 1/0)
+local Hrp = Character:WaitForChild("HumanoidRootPart", 1/0)
+local Head = Character.Head
+local Animator = Hum:FindFirstChildOfClass("Animator")
+local RunButton = Player.PlayerGui:WaitForChild("MobileControls"):WaitForChild("Run")
+local ClimbButton = Player.PlayerGui:WaitForChild("MobileControls"):WaitForChild("Climb")
+
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local StatsAndValues = require(game.ReplicatedStorage.Handlers:WaitForChild("StatsAndValues"))
+local utilities = require(game.ReplicatedStorage.Handlers.Utilities)
+
+
+local TweenService = game:GetService("TweenService")
+--local StaminaValue = Player:WaitForChild("Extras"):WaitForChild("Stamina")
+
+
+local Audios = {
+
+	["JumpPad"] = game:GetService("SoundService").JumpPad
+
+}
+
+
+local States = {
+	jumping = false,
+	running = false,
+	walking = false,
+	climbing = false,
+	falling = false,
+	rest = false,
+	PadJump = false,
+	PadJumpedAir = false
+}
+
+local AnimationTracks = {
+
+	["WalkTrack"] = Animator:LoadAnimation(script.WalkAnim),
+	["RunTrack"] = Animator:LoadAnimation(script.RunAnim),
+	["JumpTrack"] = Animator:LoadAnimation(script.JumpAnim),
+	["WallClimb"] = Animator:LoadAnimation(script.WallClimb),
+	["DoubleJumpTrack"] = Animator:LoadAnimation(script.DoubleJump),
+	["FallCrash"] = Animator:LoadAnimation(script.FallCrash),
+
+}
+
+local Inputs = 
+	{
+		running = Enum.KeyCode.LeftShift,
+		jumping = Enum.KeyCode.Space,
+		Climbing = Enum.KeyCode.W
+
+	}
+
+local Sounds = {
+
+	Running =  "rbxassetid://97123545129293"
+
+}
+
+local WalkSpeed = StatsAndValues.WalkSpeed
+local RunSpeed = StatsAndValues.RunSpeed
+local JumpPower = StatsAndValues.JumpPower
+local FatigueReset = StatsAndValues.FatigueReset
+local FatiqueFactor = StatsAndValues.FatiqueFactor
+local ClimbPushPower = StatsAndValues.ClimbPushPower
+local DoubleJumpPower = StatsAndValues.DoubleJumpPower
+
+local CurrJumpPower = JumpPower
+local lastJumped = 0
+local WallJump = false
+local PrvState = nil
+local verticleSpeed = 0
+
+
+--[[Load Sounds]]
+
+--[[Load all Effects/Trails/Beams]]
+
+local function CreateWeld(part, Location, c0, type_)
+
+	if part:IsA("Folder") then
+		for _, v in ipairs(part:GetChildren()) do
+			if v:IsA("Attachment") then
+				v.Parent = Location
+			end
+		end
+		part:Destroy()
+		return nil
+	end
+
+	if not Location:FindFirstChild("Visuals") then
+		local Visuals = Instance.new("Folder")
+		Visuals.Name = "Visuals"
+		Visuals.Parent = Location
+	end
+
+	local weld = Instance.new("Weld")
+	weld.Part0 = Location
+	weld.Part1 = part
+	weld.C0 = c0
+	weld.Parent = Location.Visuals
+
+	part.Parent = Location
+	part.Transparency = 1
+	part.Anchored = false
+	part.CanCollide= false
+	part.CanTouch = false
+	part.CanQuery = false
+	part.Massless = true
+
+	if type_ == "Cluster" then
+		local tab = {}
+		for _, v in ipairs(part:GetDescendants()) do
+			if v:IsA("ParticleEmitter") then
+				table.insert(tab, v)
+			end
+		end
+		return tab
+	end
+
+	local Visual = part:FindFirstChild("Trail") or part:FindFirstChildOfClass("ParticleEmitter")
+	Visual.Enabled = false
+	return Visual
+
+end
+
+local HandTrail = game.ReplicatedStorage.Trails.HandTrail
+local RunSmoke = game.ReplicatedStorage.Particles.RunSmoke
+local SmokeRing = game.ReplicatedStorage.Particles.Ring
+local SmokeRingSmall = game.ReplicatedStorage.Particles.RingSmall
+local MissileSmokeStaticBig = game.ReplicatedStorage.Particles.ParticleEmitterStaticBig
+local OrbParticles_ = game.ReplicatedStorage.Particles.OrbParticles
+local lavaSmoke_ = game.ReplicatedStorage.Particles.LavaSmoke
+
+local Visuals = {
+
+	RightArm = CreateWeld(HandTrail:Clone(), Character["Right Arm"], CFrame.new(0, -1,0)),
+	LeftArm = CreateWeld(HandTrail:Clone(), Character["Left Arm"], CFrame.new(0, -1, 0)),
+	RunSmoke = CreateWeld(RunSmoke:Clone(), Hrp, CFrame.new(0, -2.2, 0), "Cluster"),
+	SmokeRing = CreateWeld(SmokeRing:Clone(), Hrp, CFrame.new(0, -2.2, 0)),
+	SmokeRingSmall = CreateWeld(SmokeRingSmall:Clone(), Hrp, CFrame.new(0, -2.2, 0)),
+	MissileLaunchSmoke = CreateWeld(MissileSmokeStaticBig:Clone(), Hrp, CFrame.new(0, 0, 0)),
+	OrbParticles = CreateWeld(OrbParticles_:Clone(), Character["Torso"], CFrame.new(0, 0, 0)),
+	LavaSmoke = CreateWeld(lavaSmoke_:Clone(), Hrp, CFrame.new(0, -2.2, 0), "Cluster"),
+
+}
+
+local lavaLastEmit = tick()
+local function ToggleLavaSmoke(bool)
+
+	for _, v in pairs(Visuals.LavaSmoke) do
+		v.Enabled = bool
+	end
+
+end
+
+local function ToggleHandTrails(bool)
+	Visuals.RightArm.Enabled = bool
+	Visuals.LeftArm.Enabled = bool
+end
+
+local lastEmit = tick()
+local function ToggleRunSmoke()
+	if tick() - lastEmit > 0.3 then
+		print("Smoke")
+		for _, v in pairs(Visuals.RunSmoke) do
+			local emitN = math.random(1, 3)
+			v:Emit(emitN)
+		end
+		lastEmit = tick()
+	end
+end
+
+local function CreateJumpRing()
+	Visuals.SmokeRing.Enabled = true
+	Visuals.SmokeRing:Emit(20)
+end
+
+local function CreateLandRing()
+	Visuals.SmokeRingSmall.Enabled = true
+	Visuals.SmokeRingSmall:Emit(10)
+end
+
+--[[ Player Actions]]
+
+
+
+function AlignCharWithNormal(hitPosition, normal)
+	if WallJump then return end
+	local offset = 1
+	local charPos = hitPosition + normal*offset
+	local lookDirection = -normal
+	Hrp.CFrame = CFrame.new(charPos, charPos + lookDirection)
+end
+
+--[[Animation Things]]
+
+local function ConfigureAnimation(Anim : Animation, Priority: Enum.AnimationPriority, Looped: boolean)
+	Anim.Priority = Priority
+	Anim.Looped = Looped
+end
+
+ConfigureAnimation(AnimationTracks.WallClimb, Enum.AnimationPriority.Action4, true)
+ConfigureAnimation(AnimationTracks.DoubleJumpTrack, Enum.AnimationPriority.Action4, false)
+ConfigureAnimation(AnimationTracks.FallCrash, Enum.AnimationPriority.Action4, false)
+
+local function IsWalkAnimation(anim)
+	return anim.Name == "WalkAnim" or anim.AnimationId:lower():find("walk")
+end
+
+Animator.AnimationPlayed:Connect(function(track)
+	if IsWalkAnimation(track.Animation) then
+		AnimationTracks.WalkTrack = track
+	end
+end)
+
+--[[Force things]]
+
+local function CreateBodyVelocity(name, velocity, maxForce)
+	local bodyVelocity = Instance.new("BodyVelocity")
+	bodyVelocity.Name = name
+	bodyVelocity.Velocity = velocity
+	bodyVelocity.MaxForce = maxForce
+	bodyVelocity.P = 1250
+	bodyVelocity.Parent = nil
+	return bodyVelocity
+end
+
+ClimbBodyVelocity= CreateBodyVelocity(
+	"ClimbBodyVelocity", 
+	Vector3.new(0, ClimbPushPower, 0), 
+	Vector3.new(0, math.huge, 0)
+)
+
+local function GetVerticalSpeed(part)
+	if part and part:IsA("BasePart") then
+		return part.Velocity.Y
+	end
+	return 0
+end
+
+local function GetAllSpeed(part)
+	if part and part:IsA("BasePart") then
+		return part.Velocity.Magnitude
+	end
+end
+
+local function GetHorizontalSpeed(part)
+	if part and part:IsA("BasePart") then
+		local velocity = part.Velocity
+		local horizontalVector = Vector3.new(velocity.X, 0, velocity.Z)
+		return horizontalVector.Magnitude
+	end
+	return 0
+end
+
+local function ClimbPush()
+	if not States.climbing then return end
+	ClimbBodyVelocity.Parent = Hrp
+	task.wait()
+	ClimbBodyVelocity.Parent = nil
+end
+AnimationTracks.WallClimb:GetMarkerReachedSignal("Launch"):Connect(ClimbPush)
+
+--[[Walk/Run Stuff]]
+
+local function SetWalkSpeed(speed)
+	if AnimationTracks.WalkTrack then
+		AnimationTracks.WalkTrack:AdjustSpeed(speed)
+	end
+end
+
+local function ChangeStamina()
+	while true do
+		task.wait(0.01)
+
+		local curr = Player:GetAttribute("Stamina")
+		if not curr then continue end
+
+		if curr == 0 then
+			States.rest = true
+		elseif curr == 100 then
+			States.rest = false
+		end
+
+		if States.running then
+			Player:SetAttribute("Stamina", math.clamp(curr - 1, 0, 100))
+		else
+			Player:SetAttribute("Stamina", math.clamp(curr + 1, 0, 100))
+		end
+	end
+end
+
+local function EndRun()
+	Hum.WalkSpeed = WalkSpeed
+	States.running = false
+	SetWalkSpeed(1)
+end
+
+local function StartRun()
+	if Player:GetAttribute("Stamina") <= 0 then 
+		EndRun()
+		return 
+	end
+	Hum.WalkSpeed = RunSpeed
+	States.running = true
+	SetWalkSpeed(2)
+end
+
+
+RunButton.MouseButton1Down:Connect(function() --THIS is for Phone Running
+	StartRun()
+end)
+
+RunButton.MouseButton1Up:Connect(function() --THIS is for Phone Running
+	EndRun()
+end)
+
+RunButton.MouseLeave:Connect(function() --THIS is for Phone Running
+	EndRun()
+end)
+
+local function LinearMovement(input, phase)
+	if input.KeyCode ~= Inputs.running then return end
+
+	if phase == "Began" then
+		StartRun()
+
+	elseif phase == "Ended" then
+		EndRun()
+	end
+end
+
+
+
+
+--[[Jump Replated Stuff]]
+
+local Jumpgap = 0
+local canDjump = false
+
+local function CreateJump(moveDir, impulse)
+	local totalImpulse = moveDir + impulse
+	AnimationTracks.JumpTrack:Play()
+	Hrp:ApplyImpulse(totalImpulse)
+
+	States.jumping = true
+	CurrJumpPower -= FatiqueFactor
+	lastJumped = tick()
+end	
+
+local function PlayJumpEffect(character)
+	-- 1. Remove old highlight if they jump twice fast
+	local oldHighlight = character:FindFirstChild("JumpPadEffect")
+	if oldHighlight then oldHighlight:Destroy() end
+
+	-- 2. Create the Highlight
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "JumpPadEffect"
+	highlight.Adornee = character
+	highlight.Parent = character
+
+	-- // CUSTOMIZE COLORS HERE //
+	highlight.FillColor = Color3.fromRGB(100, 255, 255) -- Cyan (Electric look)
+	highlight.OutlineColor = Color3.fromRGB(255, 255, 255) -- White outline
+
+	-- Start bright
+	highlight.FillTransparency = 0.2
+	highlight.OutlineTransparency = 0
+
+	-- 3. Tween it out (Fade away)
+	local tweenInfo = TweenInfo.new(1.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(highlight, tweenInfo, {
+		FillTransparency = 1,
+		OutlineTransparency = 1
+	})
+
+	tween:Play()
+
+	-- 4. Clean up
+	tween.Completed:Connect(function()
+		highlight:Destroy()
+	end)
+end
+
+
+
+local function HandleJump(input, phase)
+
+	if input.KeyCode ~= Inputs.jumping then return end
+
+
+	local FreeFallState = Enum.HumanoidStateType.Freefall
+
+	--Double Jump
+	if phase == "Began" 
+		and Hum:GetState() == FreeFallState 
+		and canDjump
+		and not States.climbing 
+	then
+		--CreateJump(Hum.MoveDirection * 5, Vector3.new(0,CurrJumpPower,0) + Vector3.new(0, -math.clamp(verticleSpeed, -math.huge, 0) * 10 ,0))		
+		Hum.JumpPower = 20
+		Hum.JumpHeight = 20
+		Hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		Player:SetAttribute("SoundType", "DJump")
+		canDjump = false
+		CreateJumpRing()
+		Hum:ChangeState(Enum.HumanoidStateType.Freefall)
+		Hum.JumpPower = 0
+		Hum.JumpHeight = 0
+		return
+	end
+
+	--Normal Jump
+	if phase == "Began" 
+		and Hum:GetState() ~= FreeFallState 
+		and not States.jumping 
+	then
+		--CreateJump(Hum.MoveDirection * 5, Vector3.new(0,CurrJumpPower,0))
+		canDjump = true
+		Player:SetAttribute("SoundType", "Jump")
+		return
+	end
+
+	--Wall Jump
+
+	if phase == "Began" 
+		and not States.jumping
+		and States.climbing 
+	then
+		WallJump = true --To prevent aliging the player to wall again
+		canDjump = false --can Double Jump
+		CreateJump(-Hrp.CFrame.LookVector * 500, Vector3.new(0,CurrJumpPower,0))
+
+		task.delay(1, function() 
+			WallJump = false
+			canDjump = true
+		end)
+		return
+	end
+
+end
+
+--[[Climb Things]]
+
+
+local function StartClimb()
+	AnimationTracks.WallClimb:Play()
+	States.climbing = true
+	AnimationTracks.JumpTrack:Stop()
+end
+
+local function StopClimb()
+	if ClimbBodyVelocity then 
+		ClimbBodyVelocity.Parent = nil 
+	end
+	States.climbing = false -- Fixed the bug here
+	AnimationTracks.WallClimb:Stop()
+end
+
+
+local function HandleClimbing(input, phase)
+	if input.KeyCode ~= Inputs.Climbing then return end
+
+	if phase == "Began" then
+		StartClimb()
+	elseif phase == "Ended" then
+		StopClimb()
+	end
+end
+
+ClimbButton.MouseButton1Down:Connect(StartClimb) -- These are for Phone
+ClimbButton.MouseButton1Up:Connect(StopClimb)
+ClimbButton.MouseLeave:Connect(StopClimb)
+
+--local function HandleClimbing(input, phase)
+
+--	if input.KeyCode ~= Inputs.Climbing then return end
+
+--	if phase == "Began" then
+--		AnimationTracks.WallClimb:Play()
+--		States.climbing = true
+--		AnimationTracks.JumpTrack:Stop()
+
+--	elseif phase == "Ended" then
+--		ClimbBodyVelocity.Parent = nil
+--		States.climbing = false
+--		AnimationTracks.WallClimb:Stop()
+--	end
+
+--end
+
+--[[ Input Related Stuff ]]
+
+
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if not gameProcessed then
+		LinearMovement(input, "Began")
+		--HandleJump(input, "Began")
+		HandleClimbing(input, "Began")
+
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+	if not gameProcessed then
+		LinearMovement(input, "Ended")
+		HandleClimbing(input, "Ended")
+
+		--HandleJump(input, "Ended")
+	end
+end)
+
+Hum.JumpPower = 20
+Hum.JumpHeight = 20
+local prvState = Hum:GetState()
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+rayParams.FilterDescendantsInstances = {Hum.Parent}
+local ClimbRayLen = 2
+local Injured = false
+
+local Jumping = false
+
+Hum.StateChanged:Connect(function(old, new)
+	if old == Enum.HumanoidStateType.Freefall and new == Enum.HumanoidStateType.Landed then
+		CreateLandRing()
+		if verticleSpeed > -100 then
+			Player:SetAttribute("SoundType", "Land")
+		else
+			Player:SetAttribute("SoundType", "Crash")
+		end
+	end
+
+	if new == Enum.HumanoidStateType.Landed then
+		canDjump = false
+		Jumping = false
+		Player:SetAttribute("SoundType", "Land")
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+
+	verticleSpeed = GetVerticalSpeed(Hrp)
+	local HorizontalSpeed = GetHorizontalSpeed(Hrp)
+	local HumState = Hum:GetState()
+
+	local Rays = {
+		Climb = {
+			Head = Head.CFrame.LookVector * ClimbRayLen,
+			Hrp = Hrp.CFrame.LookVector * ClimbRayLen,
+			HrpDown = Hrp.CFrame.UpVector * -5
+		}
+	}
+
+	local RaysCasted = 
+		{
+			ClimbHead = workspace:Raycast(Head.Position, Rays.Climb.Head, rayParams),
+			ClimbHrp = workspace:Raycast(Hrp.Position, Rays.Climb.Hrp, rayParams),
+			ClimbHrpDown = workspace:Raycast(Hrp.Position, Rays.Climb.HrpDown, rayParams)
+		}
+
+	--Climb only if certain distance above ground
+	if not RaysCasted.ClimbHrpDown  then 
+
+		if RaysCasted.ClimbHrp then
+			AlignCharWithNormal(RaysCasted.ClimbHrp.Position, RaysCasted.ClimbHrp.Normal)
+			States.jumping = false
+			States.climbing = true
+		else
+			States.climbing = false
+			AnimationTracks.WallClimb:Stop()
+		end
+
+	elseif RaysCasted.ClimbHrpDown.Instance.Name == "JumpPad" then
+
+		if not States.PadJump  then
+			States.PadJump = true
+			States.PadJumpedAir = true
+			local forwardDir = Hrp.CFrame.LookVector
+			local upPower = 2000
+			local forwardPower = 2000 
+			local totalImpulse = Vector3.new(forwardDir.X * forwardPower, upPower, forwardDir.Z * forwardPower)
+			Hum:ChangeState(Enum.HumanoidStateType.Jumping)
+			Hrp:ApplyImpulse(totalImpulse)
+			task.spawn(function()
+				PlayJumpEffect(Character)
+			end)
+			Audios.JumpPad:Play()
+			task.delay(1, function()
+				States.PadJump = false
+			end)
+		end
+
+	else 
+		States.climbing = false
+		AnimationTracks.WallClimb:Stop()
+
+		if RaysCasted.ClimbHrpDown.Instance:GetAttribute("Lava") then
+			local impulse = Vector3.new(0,800,0)
+			Hum:TakeDamage(2)
+			Hrp:ApplyImpulse(impulse)
+			script.burn:Play()
+			task.delay(0.1, function()
+				ToggleLavaSmoke(true)
+			end)
+		else
+			ToggleLavaSmoke(false)
+			local gap = (RaysCasted.ClimbHrpDown.Position - Hrp.Position).Magnitude
+
+
+
+
+
+			if verticleSpeed < -170 then --if falling fast then crash anim
+				if States.PadJumpedAir then
+					States.PadJumpedAir = false
+
+				elseif math.abs(gap) < 5 then
+					Injured = true
+					StatsAndValues.ToggleInputs(true)
+					AnimationTracks.FallCrash:Play()
+					Player:SetAttribute("SoundType", "Crash")
+					task.delay(1.5, function()
+						Injured = false
+						StatsAndValues.ToggleInputs(false)
+					end)
+				end	
+			end
+		end
+
+
+
+	end
+
+
+	Jumpgap = tick() - lastJumped
+
+	--If running then smoke
+	if HumState == Enum.HumanoidStateType.Running then
+		if HorizontalSpeed > 30 then
+			ToggleRunSmoke()
+		end
+	end
+
+	if HumState == Enum.HumanoidStateType.Freefall then
+		if not States.climbing then
+			ToggleHandTrails(true)
+		else
+			ToggleHandTrails(false)
+		end
+	else
+		ToggleHandTrails(false)
+		AnimationTracks.DoubleJumpTrack:Stop()
+	end
+
+	if HumState ~= Enum.HumanoidStateType.Freefall and Jumpgap > 0.5 then
+		AnimationTracks.JumpTrack:Stop()
+		States.jumping = false
+	end
+
+	if Jumpgap > FatigueReset then --reset fatigue
+		CurrJumpPower  = JumpPower
+	end
+
+	--Change to fall track if falling fast
+	if verticleSpeed < -170 then
+		States.jumping = false
+		AnimationTracks.JumpTrack:Stop()
+		Player:SetAttribute("SoundType", "Fall")
+	end
+
+	--print(HumState)
+
+	utilities.ChangeFov(GetAllSpeed(Hrp)/2 + 70)
+
+
+	if (Player:GetAttribute("Stamina") <= 0 and States.running) or States.rest then
+		EndRun()
+	end
+
+
+	if HumState == Enum.HumanoidStateType.Jumping and not canDjump then
+		Player:SetAttribute("SoundType", "DJump")
+		print("jumpin")
+	elseif HumState == Enum.HumanoidStateType.Jumping then
+		Player:SetAttribute("SoundType", "Jump")	
+
+	elseif States.running and Player:GetAttribute("Stamina") > 0 then
+
+		SetWalkSpeed(2)
+		if HumState ~= Enum.HumanoidStateType.Freefall and HumState ~= Enum.HumanoidStateType.Jumping and HorizontalSpeed > 1 then
+			Player:SetAttribute("SoundType", "Run")
+		elseif HumState ~= Enum.HumanoidStateType.Jumping then
+			--Player:SetAttribute("SoundType", "None")
+		end
+
+	else
+
+		SetWalkSpeed(1)
+		if  HumState ~= Enum.HumanoidStateType.Freefall and HumState ~= Enum.HumanoidStateType.Jumping and HorizontalSpeed > 1 then
+			Player:SetAttribute("SoundType", "Walk")
+		elseif HumState ~= Enum.HumanoidStateType.Jumping then
+			--Player:SetAttribute("SoundType", "None")
+		end
+	end
+
+	if (HumState == Enum.HumanoidStateType.Freefall and HumState ~= Enum.HumanoidStateType.Jumping) or HorizontalSpeed < 1 then
+		Player:SetAttribute("SoundType", "None")
+	end
+
+	prvState = HumState
+
+end)
+
+
+UserInputService.JumpRequest:Connect(function()
+
+	if Jumping then return end
+	Jumping = true
+
+	print("jump")
+
+	if States.climbing then
+		WallJump = true
+		canDjump = false
+		local imp = -Hrp.CFrame.LookVector * 500
+		Hrp:ApplyImpulse(imp)
+		Player:SetAttribute("SoundType", "Jump")
+		task.delay(1, function() 
+			WallJump = false
+		end)
+	end
+
+	if canDjump and Hum:GetState() == Enum.HumanoidStateType.Freefall then
+		Hum.JumpHeight = 10
+		canDjump = false
+		Player:SetAttribute("SoundType", "DJump")
+		Hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		CreateJumpRing()
+		States.jumping = true
+		print("doubnle jump")
+	elseif Hum:GetState() ~= Enum.HumanoidStateType.Freefall or WallJump then
+
+		States.jumping = true
+		Jumping = true
+		Hum.JumpHeight = 20
+		Hum:ChangeState(Enum.HumanoidStateType.Jumping)
+		Player:SetAttribute("SoundType", "Jump")
+		canDjump = true
+
+
+	end
+
+	task.wait(0.3)
+	Jumping = false
+
+end)
+
+task.spawn(function()
+	ChangeStamina()
+end)
+
+
